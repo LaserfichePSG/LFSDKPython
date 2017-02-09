@@ -25,7 +25,7 @@ Getting Started
 
     If using PythonNet ```python -i lf_wrapper.py```
 
-4. Once on the Python promt ```>>>``` an object named ```LF``` is automatically created.  This is the entry point.
+4. Once on the Python prompt ```>>>``` an object named ```LF``` is automatically created.  This is the entry point.
 
 Wrapper Commands
 ----------------
@@ -35,7 +35,7 @@ Connects to the repository specified in your enviornment.py flie.  This method c
 
 **LoadRA**
 
-**LoadLFSO**
+**LoadCom**
 
 SDK Commands
 ------------
