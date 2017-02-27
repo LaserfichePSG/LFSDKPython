@@ -195,10 +195,15 @@ class LfWrapper:
             module = ra_modules[version][module_name]
         else:
             try:
-                dll_path = r'{}\Laserfiche.{}.dll'.format(
-                    self._args.RepositoryAccess_Paths[version],
-                    module_name
-                )
+                if module_name == 'ClientAutomation':
+                    dll_path = r'{}\ClientAutomation.dll'.format(
+                        self._args.RepositoryAccess_Paths[version]
+                    )
+                else: 
+                    dll_path = r'{}\Laserfiche.{}.dll'.format(
+                        self._args.RepositoryAccess_Paths[version],
+                        module_name
+                    )
                 namespace = 'Laserfiche.{}'.format(module_name)
 
                 # Add reference and import target module
