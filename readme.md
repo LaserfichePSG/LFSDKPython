@@ -14,8 +14,9 @@ Getting Started
 0. It's highly recommended that you add you updated your environment paths to point to python and Iron Python if it's being used.
 
 1. Verify that the SDK paths are correct.  Paths to the SDK dlls are defined in ```environment.py```.  They target the .NET 4.0 libraries for Repository access.  If you wish to run this project in .NET 2.x you may need to update some paths.  You will also need to update references if you have installed Laserfiche SDK in a non default directory.
+    NOTE: As of 12/12/2017, the wrapper will try loading assemblies from the GAC first. Thus, SDK dll paths are not needed if the modules are installed in the GAC.
 
-2. Update the default laserfiche credentials.  ***For Windows Authentication set the user and password to None***
+2. Update the default laserfiche credentials.  ***For Windows Authentication set the user and password to ''***
 
     **Note: It is highly recommended that you use Windows authentication.  If you chose to use Laserfiche credentials, your username/password will be stored in plain text.**
 
