@@ -196,38 +196,42 @@ class LfWrapper:
             module = self._sdk['module']
             return self._get_fromRA(module, attr) if type == 'RA' else self._get_fromCOM(module, attr)
     
-    def Connect(self):
-        def ConnectRA():
+    def Connect(self, **kwargs):
+        #helper functions to connect to either LFSO or RA
+        def ConnectRA(server, database, username, password):
             if self._lf_session == None:
-                if self._lf_credentials['username'] == '':
-                    credentials = (self._lf_credentials['server'],
-                                    self._lf_credentials['database'])
+                if username == '':
+                    credentials = (server, database)
                 else:
-                    credentials = (self._lf_credentials['server'],
-                                    self._lf_credentials['database'],
-                                    self._lf_credentials['username'],
-                                    self._lf_credentials['password'])
-
-                self._lf_session = self.Session.Create(*credentials)
+                    credentials = (server, database, username, password)
             else:
                 raise Exception('Please load a version of the SDK')
+
+            self._lf_session = self.Session.Create(*credentials)
             return self._lf_session
         
-        def ConnectLfso():
+        def ConnectLfso(server, database, username, password):
             if self._db == None:
-                credentials = (self._lf_credentials['database'],
-                               self._lf_credentials['server'], 
-                               self._lf_credentials['username'],
-                               self._lf_credentials['password'])
-
+                credentials = (database, server, username, password)
                 app = self.LFApplicationClass()
                 self._db = app.ConnectToDatabase(*credentials)
             return self._db
 
+        def GetDefaultCred(key, arg_list):
+            try:
+                return arg_list[key]
+            except KeyError:
+                return self._lf_credentials[key]
+        
+        #Function Logic Starts here
+        #if args are not given pull from environment.py
+        arg_keys = ['server', 'database', 'username', 'password']
+        creds = tuple([GetDefaultCred(k, kwargs) for k in arg_keys])
+
         sdk_loaded = self._sdk != None
         if sdk_loaded:
             type = self._sdk['type']
-            return ConnectRA() if type == 'RA' else ConnectLfso()
+            return ConnectRA(*creds) if type == 'RA' else ConnectLfso(*creds)
         else:
             raise Exception('Please load a version of the SDK')
 
@@ -384,7 +388,7 @@ def debug():
     LF.LoadLfso('10.0')
     #LF.LoadRA('10.0', 'RepositoryAccess')
     #LF.LoadRA('10.0', 'DocumentServices')
-    LF.Connect()
+    LF.Connect(server='localhost', database='stg-dev')
 
     print 'Connected!' 
 
