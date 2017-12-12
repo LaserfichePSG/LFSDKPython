@@ -1,5 +1,6 @@
 import sys
 import os
+import functools
 
 #Define global vars
 LF = None
@@ -11,7 +12,127 @@ if 'pdb' in sys.modules:
 
 # import CLR and environment paths
 import clr
+clr.AddReference("System")
+clr.AddReference("System.Reflection")
+from System import *
+from System.Reflection import *
 from environment import Environment
+
+#TODO:
+    #add support for static props/methods in LFModuleWrapper
+
+class LFModuleInstanceWrapper:
+    #accepts an instance of an object
+    #sets a property capturing the properties of that object instance
+    def __init__(self, instance):
+        self._instance = instance
+        self._calling_method = None
+        
+        #this is to handle the possibility of void being passed to the constructor
+        try:
+            self._objProps = self._instance.GetType().GetProperties()
+        except:
+            pass
+        
+    #overload to output the object instance and not the wrapper
+    def __repr__ (self):
+        return self._instance.__repr__()
+    
+    #overload the attribute getter
+    #check the internal object properties first, and return a wrapped instance of the result if it is found
+    #otherwise, assume we are calling one of the object's methods, so invoke a helper function to handle that
+    def __getattr__ (self, attr):
+        for x in range(self._objProps.Length):
+            if self._objProps[x].Name == attr:
+                return LFModuleInstanceWrapper(self._objProps[x].GetValue(self._instance))
+        self._calling_method = attr
+        return self._Call
+    
+    #method to call the appropriate overload of the internal object's methods given the provided arguments
+    def _Call (self, *args):
+        if self._calling_method is None:
+            raise KeyError("No method has been specified to be called!")
+        method_name = self._calling_method
+        types = []
+        for x in args:
+            if hasattr(x, '_instance'):
+                types.append(type(x._instance))
+            else:
+                types.append(type(x))
+        try:
+            check = self._instance.GetType().GetMethod(method_name, Array[Type](types)) if len(types) > 0 else self._instance.GetType().GetMethod(method_name, Type.EmptyTypes)
+            if check is None:
+                raise KeyError("No overload of the provided method exists given the provided argument types!")
+            else:
+                #return the retrieved method
+                return LFModuleInstanceWrapper(check.Invoke(self._instance, Array[Object](args)))
+        except Exception as e:
+            raise e
+                
+class LFModuleWrapper:
+    #accepts a namespace or class
+    def __init__(self, module):
+        self._module = module
+    
+    #method to invoke the proper constructor of the given class given the arguments
+    #returns LFModuleInstanceWrapper object that is constructed with output object instance of the called constructor
+    def _construct (self, args):
+        if self._module is None:
+            raise KeyError("No class has been provided!")
+        module = self._module
+        inpt = clr.GetClrType(module)
+        types = []
+        for x in args:
+            if hasattr(x, '_instance'):
+                types.append(type(x._instance))
+            else:
+                types.append(type(x))
+        try:
+            check = inpt.GetConstructor(Array[Type](types)) if len(types) > 0 else inpt.GetConstructor(Type.EmptyTypes)
+            if check is None:
+                raise KeyError("No overload of the provided class constructor exists given the provided argument types!")
+            else:
+                #return the retrieved method as an instance of LFModuleInstanceWrapper
+                 return LFModuleInstanceWrapper(check.Invoke(Array[Object](args)))
+        except Exception as e:
+            raise e
+        return self
+            
+    #overload to output the module and not the wrapper
+    def __repr__ (self):
+        return self._module.__repr__()
+    
+    #overload the __get__ to handle static properties and methods
+    def __getattr__ (self, attr):
+        self._calling_method = attr
+        return self._Call
+        
+    #overload the __call__ to invoke our wrapper constructor (unless no args are provided, in which case just output the module)
+    def __call__(self, *args):
+        if args is None:
+            return self._module
+        return self._construct(args)
+    
+    #method to call the appropriate overload of the static's methods given the provided arguments
+    def _Call (self, *args):
+        if self._calling_method is None:
+            raise KeyError("No method has been specified to be called!")
+        method_name = self._calling_method
+        types = []
+        for x in args:
+            if hasattr(x, '_instance'):
+                types.append(type(x._instance))
+            else:
+                types.append(type(x))
+        try:
+            check = clr.GetClrType(self._module).GetMethod(method_name, Array[Type](types)) if len(types) > 0 else clr.GetClrType(self._module).GetMethod(method_name, Type.EmptyTypes)
+            if check is None:
+                raise KeyError("No overload of the provided method exists given the provided argument types!")
+            else:
+                #return the retrieved method
+                return LFModuleInstanceWrapper(check.Invoke(self._module, Array[Object](args))) #NEED TO PASS 'null' as first argument to this function
+        except Exception as e:
+            raise e
 
 # Define an instance of the LF ClR. Valid Args are:
 # target = <SDK Target>.  Valid options are:
@@ -50,8 +171,8 @@ class LfWrapper:
             namespace = module[ns_str] 
             cmds = dir(namespace)
             if attr in cmds:
-                target = namespace[attr] 
-                return target
+                target = getattr(namespace, attr) 
+                return LFModuleWrapper(target)
 
         #if no match is found raise an exception
         raise KeyError('Command not found')
@@ -61,7 +182,7 @@ class LfWrapper:
         for mod in module.keys():
             namespaces = dir(module[mod])
             if attr in namespaces:
-                return module[mod][attr]
+                return LFModuleWrapper(getattr(module[mod], attr))
         raise KeyError('Command not found')
 
     # this is used to overload the property operator for the LfWrapper object
@@ -74,14 +195,18 @@ class LfWrapper:
             type = self._sdk['type']
             module = self._sdk['module']
             return self._get_fromRA(module, attr) if type == 'RA' else self._get_fromCOM(module, attr)
-
+    
     def Connect(self):
         def ConnectRA():
             if self._lf_session == None:
-                credentials = (self._lf_credentials['server'],
-                               self._lf_credentials['database'],
-                               self._lf_credentials['username'],
-                               self._lf_credentials['password'])
+                if self._lf_credentials['username'] == '':
+                    credentials = (self._lf_credentials['server'],
+                                    self._lf_credentials['database'])
+                else:
+                    credentials = (self._lf_credentials['server'],
+                                    self._lf_credentials['database'],
+                                    self._lf_credentials['username'],
+                                    self._lf_credentials['password'])
 
                 self._lf_session = self.Session.Create(*credentials)
             else:
@@ -108,12 +233,17 @@ class LfWrapper:
 
     def Disconnect(self):
         def DisconnectLfso():
-            if self._db != None:
+            try:
                 self._db.CurrentConnection.Terminate()
+            except:
+                print 'Could not close LFSO connection. Please ensure that you have opened one!'
 
         def DisconnectRA():
-            if self._lf_session != None:
-                self._lf_session.LogOut()
+            try:
+                self._lf_session.Close()
+            except Exception as e:
+                print e
+                print 'Could not close RA session. Please ensure that you have opened one!'
 
         sdk_loaded = self._sdk != None
         if sdk_loaded:
@@ -145,11 +275,18 @@ class LfWrapper:
                 lib_name = 'LFSO{}Lib'.format(version.translate(None, '.'))
 
                 #loads the LFSO reference and add it to the loaded modules list
-                clr.AddReferenceToFileAndPath(dll_path)
-                module = __import__(lib_name) 
-                lfso_modules[version] = module
-            except KeyError:
+                #tries to load from GAC first
+                try:
+                    clr.AddReference("Interop." + lib_name)
+                    module = __import__(lib_name)
+                    lfso_modules[version] = module
+                except:
+                    clr.AddReferenceToFileAndPath(dll_path)
+                    module = __import__(lib_name) 
+                    lfso_modules[version] = module
+            except Exception:
                 print 'Laserfiche Server Object v{} could not be found. Please check your environment.py file'.format(version)
+                
         #if a module was found set it as the new default
         if module != None:
             if self._sdk is None:
@@ -170,12 +307,18 @@ class LfWrapper:
                 dll_path = self._args.DocumentProcessor_Paths[version]
                 lib_name = 'DocumentProcessor'+version.translate(None, '.')
 
-                #loads the LFSO reference and add it to the loaded modules list
-                clr.AddReferenceToFileAndPath(dll_path)
-                module = __import__(lib_name) 
-                doc_modules[version] = module
-            except KeyError:
-                pass 
+                #loads the DocumentProcessor reference and add it to the loaded modules list
+                #tries to load from GAC first
+                try:
+                    clr.AddReference("Interop." + lib_name)
+                    module = __import__(lib_name)
+                    doc_modules[version] = module
+                except:
+                    clr.AddReferenceToFileAndPath(dll_path)
+                    module = __import__(lib_name) 
+                    doc_modules[version] = module
+            except Exception:
+                print 'DocumentProcessor v{} could not be found. Please check your environment.py file'.format(version)
 
         #if a module was found set it as the new default
         if module != None:
@@ -206,9 +349,16 @@ class LfWrapper:
                     )
                 namespace = 'Laserfiche.{}'.format(module_name)
 
-                # Add reference and import target module
-                clr.AddReferenceToFileAndPath(dll_path)
-                module = __import__(namespace)
+                try:
+                    if module_name == 'ClientAutomation':
+                        clr.AddReference(module_name)
+                    else:
+                        clr.AddReference(namespace)
+                    module = __import__(namespace)
+                except:
+                    # Add reference and import target module
+                    clr.AddReferenceToFileAndPath(dll_path)
+                    module = __import__(namespace)
 
                 temp = ra_modules[version] if len(ra_modules[version].keys()) != 0 else { } 
                 temp[module_name] = module
@@ -236,7 +386,7 @@ def debug():
     #LF.LoadRA('10.0', 'DocumentServices')
     LF.Connect()
 
-    print ('Connected!') 
+    print 'Connected!' 
 
 # Run main if not loaded as a module
 if __name__ == '__main__':
