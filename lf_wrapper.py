@@ -225,8 +225,11 @@ class LfWrapper:
         
         #Function Logic Starts here
         #if args are not given pull from environment.py
-        arg_keys = ['server', 'database', 'username', 'password']
-        creds = tuple([GetDefaultCred(k, kwargs) for k in arg_keys])
+        server = GetDefaultCred('server', kwargs)
+        database = GetDefaultCred('database', kwargs)
+        username = GetDefaultCred('username') if not 'server' in kwargs or 'username' in kwargs else ''
+        password = GetDefaultCred('password') if not 'server' in kwargs or 'password' in kwargs else ''
+        creds = (server, database, username, password)
 
         sdk_loaded = self._sdk != None
         if sdk_loaded:
