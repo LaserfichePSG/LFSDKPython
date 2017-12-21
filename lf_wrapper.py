@@ -48,25 +48,47 @@ class LFModuleInstanceWrapper:
         self._calling_method = attr
         return self._Call
     
+    #overload the attribute setter such it properly handles assigning to .NET properties vs. Python properties
+    def __setattr__(self, name, value):
+        if "_" in name:
+            self.__dict__[name] = value
+        else:
+            for x in range(self._objProps.Length):
+                if self._objProps[x].Name == name:
+                    if hasattr(value, '_instance'):
+                        self._objProps[x].SetValue(self._instance, value._instance)
+                    else:
+                        self._objProps[x].SetValue(self._instance, value)
+    
+    #this method facilitates the conversion of basic .NET objects back to Python objects
+    def Unbox (self):
+        return self._instance
+    
     #method to call the appropriate overload of the internal object's methods given the provided arguments
     def _Call (self, *args):
         if self._calling_method is None:
             raise KeyError("No method has been specified to be called!")
+        elif self._calling_method == 'Unbox':
+            return self._instance
         method_name = self._calling_method
         types = []
+        true_args = []
         for x in args:
             if hasattr(x, '_instance'):
-                types.append(type(x._instance))
+                types.append(x._instance.GetType())
+                true_args.append(x._instance)
             else:
                 types.append(type(x))
+                true_args.append(x)
         try:
             check = self._instance.GetType().GetMethod(method_name, Array[Type](types)) if len(types) > 0 else self._instance.GetType().GetMethod(method_name, Type.EmptyTypes)
             if check is None:
                 raise KeyError("No overload of the provided method exists given the provided argument types!")
             else:
                 #return the retrieved method
-                return LFModuleInstanceWrapper(check.Invoke(self._instance, Array[Object](args)))
+                return LFModuleInstanceWrapper(check.Invoke(self._instance, Array[Object](true_args)))
         except Exception as e:
+            print e.InnerException
             raise e
                 
 class LFModuleWrapper:
@@ -82,19 +104,23 @@ class LFModuleWrapper:
         module = self._module
         inpt = clr.GetClrType(module)
         types = []
+        true_args = []
         for x in args:
             if hasattr(x, '_instance'):
-                types.append(type(x._instance))
+                types.append(x._instance.GetType())
+                true_args.append(x._instance)
             else:
                 types.append(type(x))
+                true_args.append(x)
         try:
             check = inpt.GetConstructor(Array[Type](types)) if len(types) > 0 else inpt.GetConstructor(Type.EmptyTypes)
             if check is None:
                 raise KeyError("No overload of the provided class constructor exists given the provided argument types!")
             else:
                 #return the retrieved method as an instance of LFModuleInstanceWrapper
-                 return LFModuleInstanceWrapper(check.Invoke(Array[Object](args)))
+                 return LFModuleInstanceWrapper(check.Invoke(Array[Object](true_args)))
         except Exception as e:
+            print e.InnerException
             raise e
         return self
             
@@ -119,19 +145,23 @@ class LFModuleWrapper:
             raise KeyError("No method has been specified to be called!")
         method_name = self._calling_method
         types = []
+        true_args = []
         for x in args:
             if hasattr(x, '_instance'):
-                types.append(type(x._instance))
+                types.append(x._instance.GetType())
+                true_args.append(x._instance)
             else:
                 types.append(type(x))
+                true_args.append(x)
         try:
             check = clr.GetClrType(self._module).GetMethod(method_name, Array[Type](types)) if len(types) > 0 else clr.GetClrType(self._module).GetMethod(method_name, Type.EmptyTypes)
             if check is None:
                 raise KeyError("No overload of the provided method exists given the provided argument types!")
             else:
                 #return the retrieved method
-                return LFModuleInstanceWrapper(check.Invoke(self._module, Array[Object](args))) #NEED TO PASS 'null' as first argument to this function
+                return LFModuleInstanceWrapper(check.Invoke(self._module, Array[Object](true_args))) #NEED TO PASS 'null' as first argument to this function
         except Exception as e:
+            print e.InnerException
             raise e
 
 # Define an instance of the LF ClR. Valid Args are:
@@ -196,38 +226,45 @@ class LfWrapper:
             module = self._sdk['module']
             return self._get_fromRA(module, attr) if type == 'RA' else self._get_fromCOM(module, attr)
     
-    def Connect(self):
-        def ConnectRA():
+    def Connect(self, **kwargs):
+        #helper functions to connect to either LFSO or RA
+        def ConnectRA(server, database, username, password):
             if self._lf_session == None:
-                if self._lf_credentials['username'] == '':
-                    credentials = (self._lf_credentials['server'],
-                                    self._lf_credentials['database'])
+                if username:
+                    credentials = (server, database)
                 else:
-                    credentials = (self._lf_credentials['server'],
-                                    self._lf_credentials['database'],
-                                    self._lf_credentials['username'],
-                                    self._lf_credentials['password'])
-
-                self._lf_session = self.Session.Create(*credentials)
+                    credentials = (server, database, username, password)
             else:
                 raise Exception('Please load a version of the SDK')
+                
+            self._lf_session = self.Session.Create(*credentials)
             return self._lf_session
         
-        def ConnectLfso():
+        def ConnectLfso(server, database, username, password):
             if self._db == None:
-                credentials = (self._lf_credentials['database'],
-                               self._lf_credentials['server'], 
-                               self._lf_credentials['username'],
-                               self._lf_credentials['password'])
-
+                credentials = (database, server, username, password)
                 app = self.LFApplicationClass()
                 self._db = app.ConnectToDatabase(*credentials)
             return self._db
+        
+        def GetDefaultCred(key, arg_list):
+            try:
+                return arg_list[key]
+            except KeyError:
+                return self._lf_credentials[key]
+            
+        #Function Logic Starts here
+        #if args are not given pull from environment.py
+        server = GetDefaultCred('server', kwargs)
+        database = GetDefaultCred('database', kwargs)
+        username = GetDefaultCred('username', kwargs) if not 'server' in kwargs or 'username' in kwargs else ''
+        password = GetDefaultCred('password', kwargs) if not 'server' in kwargs or 'password' in kwargs else ''
+        creds = (server, database, username, password)
 
         sdk_loaded = self._sdk != None
         if sdk_loaded:
             type = self._sdk['type']
-            return ConnectRA() if type == 'RA' else ConnectLfso()
+            return ConnectRA(*creds) if type == 'RA' else ConnectLfso(*creds)
         else:
             raise Exception('Please load a version of the SDK')
 
