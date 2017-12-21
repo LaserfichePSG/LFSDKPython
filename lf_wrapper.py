@@ -230,13 +230,13 @@ class LfWrapper:
         #helper functions to connect to either LFSO or RA
         def ConnectRA(server, database, username, password):
             if self._lf_session == None:
-                if username:
+                if username == '':
                     credentials = (server, database)
                 else:
                     credentials = (server, database, username, password)
             else:
                 raise Exception('Please load a version of the SDK')
-                
+            
             self._lf_session = self.Session.Create(*credentials)
             return self._lf_session
         
@@ -259,6 +259,20 @@ class LfWrapper:
         database = GetDefaultCred('database', kwargs)
         username = GetDefaultCred('username', kwargs) if not 'server' in kwargs or 'username' in kwargs else ''
         password = GetDefaultCred('password', kwargs) if not 'server' in kwargs or 'password' in kwargs else ''
+        creds = (server, database, username, password)
+
+        def GetDefaultCred(key, arg_list):
+            try:
+                return arg_list[key]
+            except KeyError:
+                return self._lf_credentials[key]
+        
+        #Function Logic Starts here
+        #if args are not given pull from environment.py
+        server = GetDefaultCred('server', kwargs)
+        database = GetDefaultCred('database', kwargs)
+        username = GetDefaultCred('username') if not 'server' in kwargs or 'username' in kwargs else ''
+        password = GetDefaultCred('password') if not 'server' in kwargs or 'password' in kwargs else ''
         creds = (server, database, username, password)
 
         sdk_loaded = self._sdk != None
@@ -421,7 +435,7 @@ def debug():
     LF.LoadLfso('10.0')
     #LF.LoadRA('10.0', 'RepositoryAccess')
     #LF.LoadRA('10.0', 'DocumentServices')
-    LF.Connect()
+    LF.Connect(server='localhost', database='stg-dev')
 
     print 'Connected!' 
 
