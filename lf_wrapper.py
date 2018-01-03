@@ -131,7 +131,17 @@ class LFModuleWrapper:
     #overload the __get__ to handle static properties and methods
     def __getattr__ (self, attr):
         self._calling_method = attr
-        return self._Call
+        #check if the property is an ENUM
+        type = clr.GetClrType(self._module)
+        is_enum = type.IsEnum
+        if is_enum:
+            enum_val = [f for f in type.GetFields() if f.Name == attr]
+            if(len(enum_val) == 1):
+                return Enum.Parse(type, attr)
+            else:
+                raise KeyError("{} is not a valid value for {}".format(attr, self._module))
+        else:
+            return self._Call
         
     #overload the __call__ to invoke our wrapper constructor (unless no args are provided, in which case just output the module)
     def __call__(self, *argv):
@@ -419,10 +429,6 @@ def debug():
     global LF
     LF = LFWrapper(Environment())
     LF.LoadRA('10.0', 'RepositoryAccess')
-    #LF.LoadRA('10.0', 'DocumentServices')
-    LF.Connect(server='localhost', database='stg-dev')
-
-    print 'Connected!' 
 
 # Run main if not loaded as a module
 if __name__ == '__main__':
