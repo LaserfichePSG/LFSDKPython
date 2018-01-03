@@ -65,7 +65,7 @@ class LFModuleInstanceWrapper:
         return self._instance
     
     #method to call the appropriate overload of the internal object's methods given the provided arguments
-    def _Call (self, *args):
+    def _Call (self, *argv):
         if self._calling_method is None:
             raise KeyError("No method has been specified to be called!")
         elif self._calling_method == 'Unbox':
@@ -73,7 +73,7 @@ class LFModuleInstanceWrapper:
         method_name = self._calling_method
         types = []
         true_args = []
-        for x in args:
+        for x in argv:
             if hasattr(x, '_instance'):
                 types.append(x._instance.GetType())
                 true_args.append(x._instance)
@@ -98,14 +98,14 @@ class LFModuleWrapper:
     
     #method to invoke the proper constructor of the given class given the arguments
     #returns LFModuleInstanceWrapper object that is constructed with output object instance of the called constructor
-    def _construct (self, args):
+    def _construct (self, argv):
         if self._module is None:
             raise KeyError("No class has been provided!")
         module = self._module
         inpt = clr.GetClrType(module)
         types = []
         true_args = []
-        for x in args:
+        for x in argv:
             if hasattr(x, '_instance'):
                 types.append(x._instance.GetType())
                 true_args.append(x._instance)
@@ -134,19 +134,19 @@ class LFModuleWrapper:
         return self._Call
         
     #overload the __call__ to invoke our wrapper constructor (unless no args are provided, in which case just output the module)
-    def __call__(self, *args):
-        if args is None:
+    def __call__(self, *argv):
+        if argv is None:
             return self._module
-        return self._construct(args)
+        return self._construct(argv)
     
     #method to call the appropriate overload of the static's methods given the provided arguments
-    def _Call (self, *args):
+    def _Call (self, *argv):
         if self._calling_method is None:
             raise KeyError("No method has been specified to be called!")
         method_name = self._calling_method
         types = []
         true_args = []
-        for x in args:
+        for x in argv:
             if hasattr(x, '_instance'):
                 types.append(x._instance.GetType())
                 true_args.append(x._instance)
@@ -167,8 +167,8 @@ class LFModuleWrapper:
 # Define an instance of the LF ClR. Valid Args are:
 # target = <SDK Target>.  Valid options are:
 #       
-class LfWrapper:
-    def __init__(self, args):
+class LFWrapper:
+    def __init__(self, argv):
         '''
         args:
            RepositoryAccess - An object which maps version to a dll on the local disk
@@ -180,7 +180,7 @@ class LfWrapper:
                 output[key] = val 
             return output
 
-        self._args = args
+        self._args = argv
         self._lf_credentials = self._args.LaserficheConnection
         self._loaded_modules = { 
             'LFSO': initialize_module_store(self._args.LFSO_Paths, { }),
@@ -215,7 +215,7 @@ class LfWrapper:
                 return LFModuleWrapper(getattr(module[mod], attr))
         raise KeyError('Command not found')
 
-    # this is used to overload the property operator for the LfWrapper object
+    # this is used to overload the property operator for the LFWrapper object
     # it will allow short cut access to SDK objects through the wrapper without having to go through
     # the namespaces or import specific functions from the module.
     def __getattr__(self, attr):
@@ -412,14 +412,13 @@ class LfWrapper:
 
 def main() :
     global LF
-    LF = LfWrapper(Environment())
+    LF = LFWrapper(Environment())
 
 # run for debugging
 def debug():
     global LF
-    LF = LfWrapper(Environment())
-    LF.LoadLfso('10.0')
-    #LF.LoadRA('10.0', 'RepositoryAccess')
+    LF = LFWrapper(Environment())
+    LF.LoadRA('10.0', 'RepositoryAccess')
     #LF.LoadRA('10.0', 'DocumentServices')
     LF.Connect(server='localhost', database='stg-dev')
 
