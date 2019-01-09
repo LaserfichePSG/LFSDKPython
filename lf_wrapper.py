@@ -5,7 +5,6 @@ import clr
 
 #Define global vars
 LF = None
-PUBLIC_KEY_TOKEN = '3f98b3eaee6c16a6'
 IS_IPY = 'GetClrType' in dir(clr)
 DEBUG = False
 # Hack for running pdb under ipy. Local path not automatically added to sys
@@ -21,10 +20,6 @@ from System import *
 from System.IO import FileNotFoundException
 from System.Reflection import *
 from environment import Environment
-
-#TODO:
-    #add support for static props/methods in LFModuleWrapper
-
 
 def GetModuleAttr(module, attr):
     try:
@@ -114,7 +109,6 @@ class LFModuleInstanceWrapper:
         return {'types': Array[Type](arg_types), 'values': Array[Object](arg_vals)}
 
 class LFModuleWrapper:
-
     #method to invoke the proper constructor of the given class given the arguments
     #returns LFModuleInstanceWrapper object that is constructed with output object instance of the called constructor
     def _construct (self, argv):
@@ -189,8 +183,12 @@ class LFModuleWrapper:
         else:
             class_name = mod.__module__ + '.' + mod.__name__
             namespace = mod.__module__
-            qual_name = r'{}, {}, Version={}.0.0, Culture=neutral, PublicKeyToken={}'.format(
-                class_name, namespace, ver, PUBLIC_KEY_TOKEN
+            #hack to handle ClientAutomation library
+            if namespace.toLower() == 'laserfiche.clientautomation':
+                namespace = 'ClientAutomation'
+
+            qual_name = r'{}, {}, Version={}.0.0, Culture=neutral'.format(
+                class_name, namespace, ver
             )
             return Type.GetType(qual_name)
 
@@ -242,9 +240,10 @@ class LFWrapper:
     def __repr__(self):
         return 'LF SDK Wrapper'
 
-    # try to pull a target attribute from RA. Search order is DocumentService, RepositoryAccess, SecurityTokenService
+    # try to pull a target attribute from RA. Search order is DocumentService, ClientAutomation, RepositoryAccess, SecurityTokenService
     def _get_fromRA(self, module, attr, ver):
-        namespaces = [GetModuleAttr(module, ns) for ns in ['DocumentService', 'RepositoryAccess', 'SecurityTokenService'] if ns != None]
+        ns_search_list = ['DocumentService', 'ClientAutomation', 'RepositoryAccess', 'SecurityToken']
+        namespaces = [ns for ns in map(lambda n: GetModuleAttr(module, n), ns_search_list) if ns != None]
         for ns in namespaces:
             target = GetModuleAttr(ns, attr)
             if target != None:
@@ -418,8 +417,9 @@ class LFWrapper:
         def load_from_GAC(module_name, version):
             namespace = 'Laserfiche.{}'.format(module_name)
             version = r'{}.0.0'.format(version)
-            assembly_name = (r'Laserfiche.{}, Version={}, Culture=neutral, PublicKeyToken={}'
-                             ).format(module_name, version, PUBLIC_KEY_TOKEN)
+            module_name = module_name if module_name.toLower() == 'clientautomation' else r'Laserfiche.{}'.format(module_name)
+            assembly_name = (r'Laserfiche.{}, Version={}, Culture=neutral'
+                             ).format(module_name, version)
             try:
                 clr.AddReference(assembly_name)
                 return __import__(namespace)
@@ -474,10 +474,8 @@ def main() :
 def debug():
     global LF
     LF = LFWrapper(Environment())
-    LF.LoadRA('10.2', 'RepositoryAccess')
-    LF.Connect(server='localhost', database='gh-test-1')
-    for a in LF.Account.EnumAll(LF._lf_session):
-        print a
+    LF.LoadRA('10.2', 'ClientAutomation')
+    client_mgr = LF.ClientManager()
 
 # Run main if not loaded as a module
 if __name__ == '__main__':

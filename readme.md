@@ -32,12 +32,18 @@ Wrapper Commands
 ----------------
 
 **Connect**
-Connects to the repository specified in your enviornment.py flie.  This method can also be overridden to pass in aritrary credentials
+Connects to the repository specified in your enviornment.py flie.  This method can also be overridden to pass in aritrary credentials. To use windows authentication omit the ```username``` and ```password``` arguments.
+    ```LF.Connect(server='', database='', username='', password='')```
 
 **LoadRA**
-
+Loads a .NET Laserfiche SDK library. By default it will search the GAC first, and then default down to the paths listed in your environments.py file. For library names omit the "Laserfiche." part so repository access would be "RepositoryAccess" instead of "Laserfiche.RepositoryAccess".
+    ```LF.LoadRA(version, name)```
+    
 **LoadCom**
 
 SDK Commands
 ------------
 Once the SDK has been loaded in the wrapper SDK commands can be executed directy from the wrapper.  The internal session object will automatically be passed into any call that is made.
+
+**Examples**
+
