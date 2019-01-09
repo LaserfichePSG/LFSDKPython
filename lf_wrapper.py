@@ -1,9 +1,12 @@
 import sys
 import os
 import functools
+import clr
 
 #Define global vars
 LF = None
+PUBLIC_KEY_TOKEN = '3f98b3eaee6c16a6'
+IS_IPY = 'GetClrType' in dir(clr)
 DEBUG = False
 # Hack for running pdb under ipy. Local path not automatically added to sys
 if 'pdb' in sys.modules:
@@ -11,15 +14,23 @@ if 'pdb' in sys.modules:
     DEBUG = True
 
 # import CLR and environment paths
-import clr
 clr.AddReference("System")
+clr.AddReference("System.IO")
 clr.AddReference("System.Reflection")
 from System import *
+from System.IO import FileNotFoundException
 from System.Reflection import *
 from environment import Environment
 
 #TODO:
     #add support for static props/methods in LFModuleWrapper
+
+
+def GetModuleAttr(module, attr):
+    try:
+        return getattr(module, attr)
+    except AttributeError:
+        return None
 
 class LFModuleInstanceWrapper:
     #accepts an instance of an object
@@ -33,7 +44,7 @@ class LFModuleInstanceWrapper:
             self._objProps = self._instance.GetType().GetProperties()
         except:
             pass
-        
+
     #overload to output the object instance and not the wrapper
     def __repr__ (self):
         return self._instance.__repr__()
@@ -45,8 +56,12 @@ class LFModuleInstanceWrapper:
         for x in range(self._objProps.Length):
             if self._objProps[x].Name == attr:
                 return LFModuleInstanceWrapper(self._objProps[x].GetValue(self._instance))
-        self._calling_method = attr
-        return self._Call
+        #if this is one of python's magic methods unbox and pass to the instance
+        if attr.startswith('__'):
+            return self.Unbox if IS_IPY else getattr(self.Unbox(), attr)
+        else:
+            self._calling_method = attr
+            return self._Call
     
     #overload the attribute setter such it properly handles assigning to .NET properties vs. Python properties
     def __setattr__(self, name, value):
@@ -70,55 +85,51 @@ class LFModuleInstanceWrapper:
             raise KeyError("No method has been specified to be called!")
         elif self._calling_method == 'Unbox':
             return self._instance
-        method_name = self._calling_method
-        types = []
-        true_args = []
-        for x in argv:
-            if hasattr(x, '_instance'):
-                types.append(x._instance.GetType())
-                true_args.append(x._instance)
-            else:
-                types.append(type(x))
-                true_args.append(x)
+        
         try:
-            check = self._instance.GetType().GetMethod(method_name, Array[Type](types)) if len(types) > 0 else self._instance.GetType().GetMethod(method_name, Type.EmptyTypes)
-            if check is None:
+            method_name = self._calling_method
+            inst_type = self._instance.GetType()
+            arg_sig = self._GetArgSignature(argv)
+
+            target_method = inst_type.GetMethod(method_name, arg_sig['types'] if len(arg_sig['types']) > 0 else Type.EmptyTypes)
+            if target_method is None:
                 raise KeyError("No overload of the provided method exists given the provided argument types!")
             else:
                 #return the retrieved method
-                return LFModuleInstanceWrapper(check.Invoke(self._instance, Array[Object](true_args)))
+                return LFModuleInstanceWrapper(target_method.Invoke(self._instance, arg_sig['values']))
         except Exception as e:
             print e.InnerException
             raise e
                 
+    def _GetArgSignature(self, args):
+        arg_types = []
+        arg_vals = []
+        for arg in args:
+            if hasattr(arg, '_instance'):
+                arg_types.append(arg._instance.GetType())
+                arg_vals.append(arg._instance)
+            else:
+                arg_types.append(type(arg))
+                arg_vals.append(arg)
+        return {'types': Array[Type](arg_types), 'values': Array[Object](arg_vals)}
+
 class LFModuleWrapper:
-    #accepts a namespace or class
-    def __init__(self, module):
-        self._module = module
-    
+
     #method to invoke the proper constructor of the given class given the arguments
     #returns LFModuleInstanceWrapper object that is constructed with output object instance of the called constructor
     def _construct (self, argv):
         if self._module is None:
             raise KeyError("No class has been provided!")
-        module = self._module
-        inpt = clr.GetClrType(module)
-        types = []
-        true_args = []
-        for x in argv:
-            if hasattr(x, '_instance'):
-                types.append(x._instance.GetType())
-                true_args.append(x._instance)
-            else:
-                types.append(type(x))
-                true_args.append(x)
         try:
-            check = inpt.GetConstructor(Array[Type](types)) if len(types) > 0 else inpt.GetConstructor(Type.EmptyTypes)
-            if check is None:
+            arg_sig = self._GetArgSignature(argv)
+            mod_type = self._GetClrType()
+
+            target_constructor = mod_type.GetConstructor(arg_sig['types'] if len(arg_sig['types']) > 0 else Type.EmptyTypes)
+            if target_constructor is None:
                 raise KeyError("No overload of the provided class constructor exists given the provided argument types!")
             else:
                 #return the retrieved method as an instance of LFModuleInstanceWrapper
-                 return LFModuleInstanceWrapper(check.Invoke(Array[Object](true_args)))
+                 return LFModuleInstanceWrapper(target_constructor.Invoke(arg_sig['values']))
         except Exception as e:
             print e.InnerException
             raise e
@@ -131,15 +142,13 @@ class LFModuleWrapper:
     #overload the __get__ to handle static properties and methods
     def __getattr__ (self, attr):
         self._calling_method = attr
-        #check if the property is an ENUM
-        type = clr.GetClrType(self._module)
-        is_enum = type.IsEnum
-        if is_enum:
-            enum_val = [f for f in type.GetFields() if f.Name == attr]
-            if(len(enum_val) == 1):
-                return Enum.Parse(type, attr)
-            else:
-                raise KeyError("{} is not a valid value for {}".format(attr, self._module))
+        #check if the property is an ENUM, Enums return back ints 
+        enum_val = GetModuleAttr(self._module, attr)
+
+        if enum_val == None:
+            raise KeyError("{} is not a valid value for {}".format(attr, self._module))
+        elif type(enum_val) == int:
+            return enum_val 
         else:
             return self._Call
         
@@ -153,26 +162,55 @@ class LFModuleWrapper:
     def _Call (self, *argv):
         if self._calling_method is None:
             raise KeyError("No method has been specified to be called!")
-        method_name = self._calling_method
-        types = []
-        true_args = []
-        for x in argv:
-            if hasattr(x, '_instance'):
-                types.append(x._instance.GetType())
-                true_args.append(x._instance)
-            else:
-                types.append(type(x))
-                true_args.append(x)
         try:
-            check = clr.GetClrType(self._module).GetMethod(method_name, Array[Type](types)) if len(types) > 0 else clr.GetClrType(self._module).GetMethod(method_name, Type.EmptyTypes)
-            if check is None:
+            method_name = self._calling_method
+            arg_sig = self._GetArgSignature(argv)
+            mod_type = self._GetClrType()
+
+            #try and find the appropriate orverloaded method based on the argument type signature
+            target_method = mod_type.GetMethod(method_name, arg_sig['types'] if len(arg_sig['types']) > 0 else Type.EmptyTypes)
+            if target_method is None:
                 raise KeyError("No overload of the provided method exists given the provided argument types!")
             else:
                 #return the retrieved method
-                return LFModuleInstanceWrapper(check.Invoke(self._module, Array[Object](true_args))) #NEED TO PASS 'null' as first argument to this function
+                return LFModuleInstanceWrapper(target_method.Invoke(self._module, arg_sig['values']))
         except Exception as e:
             print e.InnerException
             raise e
+
+    def _GetClrType(self, mod=None, ver=None):
+        #if args are not passed pull from the instance
+        mod = self._module if mod == None else mod
+        ver = self._version if ver == None else ver
+
+        #if running in ipy use the built in lib
+        if IS_IPY:
+            return clr.GetClrType(mod)
+        else:
+            class_name = mod.__module__ + '.' + mod.__name__
+            namespace = mod.__module__
+            qual_name = r'{}, {}, Version={}.0.0, Culture=neutral, PublicKeyToken={}'.format(
+                class_name, namespace, ver, PUBLIC_KEY_TOKEN
+            )
+            return Type.GetType(qual_name)
+
+    #accepts a namespace or class
+    def __init__(self, module, ver):
+        self._module = module
+        self._version = ver
+
+    def _GetArgSignature(self, arg):
+        arg_types = []
+        arg_vals = []
+        for arg in arg:
+            if hasattr(arg, '_instance'):
+                arg_types.append(arg._instance.GetType())
+                arg_vals.append(arg._instance)
+            else:
+                arg_types.append(type(arg))
+                arg_vals.append(arg)
+        #box arrays into .NET types for IronPython support
+        return {'types': Array[Type](arg_types), 'values': Array[Object](arg_vals)}
 
 # Define an instance of the LF ClR. Valid Args are:
 # target = <SDK Target>.  Valid options are:
@@ -205,15 +243,14 @@ class LFWrapper:
         return 'LF SDK Wrapper'
 
     # try to pull a target attribute from RA. Search order is DocumentService, RepositoryAccess, SecurityTokenService
-    def _get_fromRA(self, module, attr):
-        namespaces = dir(module)
-        for ns_str in namespaces:
-            namespace = module[ns_str] 
-            cmds = dir(namespace)
-            if attr in cmds:
-                target = getattr(namespace, attr) 
-                return LFModuleWrapper(target)
-
+    def _get_fromRA(self, module, attr, ver):
+        namespaces = [GetModuleAttr(module, ns) for ns in ['DocumentService', 'RepositoryAccess', 'SecurityTokenService'] if ns != None]
+        for ns in namespaces:
+            target = GetModuleAttr(ns, attr)
+            if target != None:
+                return LFModuleWrapper(target, ver)
+            else:
+                continue
         #if no match is found raise an exception
         raise KeyError('Command not found')
 
@@ -234,7 +271,8 @@ class LFWrapper:
         else:
             type = self._sdk['type']
             module = self._sdk['module']
-            return self._get_fromRA(module, attr) if type == 'RA' else self._get_fromCOM(module, attr)
+            version = self._sdk['version']
+            return self._get_fromRA(module, attr, version) if type == 'RA' else self._get_fromCOM(module, attr)
     
     def Connect(self, **kwargs):
         #helper functions to connect to either LFSO or RA
@@ -377,47 +415,55 @@ class LFWrapper:
         return module
     
     def LoadRA(self, version, module_name):
+        def load_from_GAC(module_name, version):
+            namespace = 'Laserfiche.{}'.format(module_name)
+            version = r'{}.0.0'.format(version)
+            assembly_name = (r'Laserfiche.{}, Version={}, Culture=neutral, PublicKeyToken={}'
+                             ).format(module_name, version, PUBLIC_KEY_TOKEN)
+            try:
+                clr.AddReference(assembly_name)
+                return __import__(namespace)
+            except FileNotFoundException:
+                return None 
+
+        def load_from_file(module_name, version):
+            namespace = 'Laserfiche.{}'.format(module_name)
+            dll_path = (r'{}\{}.dll' if module_name == 'ClientAutomation' else r'{}\Laserfiche.{}.dll'
+                        ).format(self._args.RepositoryAccess_Paths[version], module_name)
+            #IronPython uses a differnt method to load from file
+            try:
+                if 'AddReferenceToFileAndPath' in dir(clr):
+                    clr.AddRefernceToFileAndPath(dll_path)
+                else:
+                    clr.AddReference(dll_path)
+                return __import__(namespace)
+            except FileNotFoundException:
+                return None
+
         ra_modules = self._loaded_modules['RepositoryAccess']
         module_whitelist = ['RepositoryAccess', 'DocumentServices', 'ClientAutomation'] 
         module = None
 
+        #Check to see if the module has already been loaded and is in the cache
         if version in ra_modules.keys() and module_name in ra_modules[version].keys():
             module = ra_modules[version][module_name]
         else:
             try:
-                if module_name == 'ClientAutomation':
-                    dll_path = r'{}\ClientAutomation.dll'.format(
-                        self._args.RepositoryAccess_Paths[version]
-                    )
-                else: 
-                    dll_path = r'{}\Laserfiche.{}.dll'.format(
-                        self._args.RepositoryAccess_Paths[version],
-                        module_name
-                    )
-                namespace = 'Laserfiche.{}'.format(module_name)
-
-                try:
-                    if module_name == 'ClientAutomation':
-                        clr.AddReference(module_name)
-                    else:
-                        clr.AddReference(namespace)
-                    module = __import__(namespace)
-                except:
-                    # Add reference and import target module
-                    clr.AddReferenceToFileAndPath(dll_path)
-                    module = __import__(namespace)
-
-                temp = ra_modules[version] if len(ra_modules[version].keys()) != 0 else { } 
-                temp[module_name] = module
-                ra_modules[version] = temp
-                    
-            except KeyError:
-                print 'Repository Access v{} could not be found. Please check your environment.py file'.format(version)
-
-        #if a module was found set it as the new default
+                #try to load the library from the GAC
+                module = load_from_GAC(module_name, version)
+                #if not found in the gac try to load by file path
+                if module == None:
+                    module = load_from_file(module_name, version)
+                #if not found, raise exception and break out
+                if module == None:
+                    raise FileNotFoundException(r'{} v{} could not be found. Please ensure the library is in the gac or your environment.py file'.format(module_name, version))
+                #Add module to the cache
+                self._loaded_modules['RepositoryAccess'][version] = {'type': 'RA', 'module': module, 'version': version}
+            except FileNotFoundException as ex:
+                print ex.Message
         if module != None:
-            self._sdk = { 'type': 'RA', 'module': module }
-            
+            self._sdk = self._loaded_modules['RepositoryAccess'][version] 
+
         return module
 
 def main() :
@@ -428,7 +474,10 @@ def main() :
 def debug():
     global LF
     LF = LFWrapper(Environment())
-    LF.LoadRA('10.0', 'RepositoryAccess')
+    LF.LoadRA('10.2', 'RepositoryAccess')
+    LF.Connect(server='localhost', database='gh-test-1')
+    for a in LF.Account.EnumAll(LF._lf_session):
+        print a
 
 # Run main if not loaded as a module
 if __name__ == '__main__':
