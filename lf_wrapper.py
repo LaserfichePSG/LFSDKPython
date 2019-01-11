@@ -81,6 +81,11 @@ class LFModuleInstanceWrapper:
         elif self._calling_method == 'Unbox':
             return self._instance
         
+        #check arguments and throw exception is there are None references
+        #the wrapper uses the calling arguments types to infer which overload to invoke
+        if None in argv:
+            raise KeyError("Arguments of type 'NoneType' not supported within the wrapper.")
+        
         try:
             method_name = self._calling_method
             inst_type = self._instance.GetType()
@@ -156,6 +161,11 @@ class LFModuleWrapper:
     def _Call (self, *argv):
         if self._calling_method is None:
             raise KeyError("No method has been specified to be called!")
+        #check arguments and throw exception is there are None references
+        #the wrapper uses the calling arguments types to infer which overload to invoke
+        if None in argv:
+            raise KeyError("Arguments of type 'NoneType' not supported within the wrapper.")
+
         try:
             method_name = self._calling_method
             arg_sig = self._GetArgSignature(argv)
@@ -184,7 +194,7 @@ class LFModuleWrapper:
             class_name = mod.__module__ + '.' + mod.__name__
             namespace = mod.__module__
             #hack to handle ClientAutomation library
-            if namespace.toLower() == 'laserfiche.clientautomation':
+            if namespace.lower() == 'laserfiche.clientautomation':
                 namespace = 'ClientAutomation'
 
             qual_name = r'{}, {}, Version={}.0.0, Culture=neutral'.format(
@@ -197,10 +207,10 @@ class LFModuleWrapper:
         self._module = module
         self._version = ver
 
-    def _GetArgSignature(self, arg):
+    def _GetArgSignature(self, args):
         arg_types = []
         arg_vals = []
-        for arg in arg:
+        for arg in args:
             if hasattr(arg, '_instance'):
                 arg_types.append(arg._instance.GetType())
                 arg_vals.append(arg._instance)
@@ -214,7 +224,7 @@ class LFModuleWrapper:
 # target = <SDK Target>.  Valid options are:
 #       
 class LFWrapper:
-    def __init__(self, argv):
+    def __init__(self, argv = None):
         '''
         args:
            RepositoryAccess - An object which maps version to a dll on the local disk
@@ -226,7 +236,7 @@ class LFWrapper:
                 output[key] = val 
             return output
 
-        self._args = argv
+        self._args = argv if argv else Environment()
         self._lf_credentials = self._args.LaserficheConnection
         self._loaded_modules = { 
             'LFSO': initialize_module_store(self._args.LFSO_Paths, { }),
@@ -277,16 +287,16 @@ class LFWrapper:
         #helper functions to connect to either LFSO or RA
         def ConnectRA(server, database, username, password):
             if self._lf_session == None:
-                if username == '':
-                    credentials = (server, database)
-                else:
+                if username:
                     credentials = (server, database, username, password)
+                else:
+                    credentials = (server, database)
             else:
                 raise Exception('Please load a version of the SDK')
             
             self._lf_session = self.Session.Create(*credentials)
             return self._lf_session
-        
+
         def ConnectLfso(server, database, username, password):
             if self._db == None:
                 credentials = (database, server, username, password)
@@ -417,8 +427,8 @@ class LFWrapper:
         def load_from_GAC(module_name, version):
             namespace = 'Laserfiche.{}'.format(module_name)
             version = r'{}.0.0'.format(version)
-            module_name = module_name if module_name.toLower() == 'clientautomation' else r'Laserfiche.{}'.format(module_name)
-            assembly_name = (r'Laserfiche.{}, Version={}, Culture=neutral'
+            module_name = module_name if module_name.lower() == 'clientautomation' else r'Laserfiche.{}'.format(module_name)
+            assembly_name = (r'{}, Version={}, Culture=neutral'
                              ).format(module_name, version)
             try:
                 clr.AddReference(assembly_name)
@@ -474,8 +484,8 @@ def main() :
 def debug():
     global LF
     LF = LFWrapper(Environment())
-    LF.LoadRA('10.2', 'ClientAutomation')
-    client_mgr = LF.ClientManager()
+    LF.LoadRA('10.2', 'RepositoryAccess')
+    LF.Connect(server = 'localhost', database = 'PrimeX')
 
 # Run main if not loaded as a module
 if __name__ == '__main__':
