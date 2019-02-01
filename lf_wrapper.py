@@ -7,6 +7,7 @@ import clr
 LF = None
 IS_IPY = 'GetClrType' in dir(clr)
 DEBUG = False
+
 # Hack for running pdb under ipy. Local path not automatically added to sys
 if 'pdb' in sys.modules:
     sys.path.insert(0, os.getcwd())
@@ -346,6 +347,15 @@ class LFWrapper:
         else:
             raise Exception('Please load a version of the SDK')
 
+    def GetSession(self):
+        if self._lf_session:
+            return self._lf_session
+        else:
+            raise Exception('Not logged in!')
+
+    def GetCredentials(self):
+        if self._lf_credentials:
+            return self._lf_credentials
 
     def LoadCom(self, version, module_name):
         if module_name == "LFSO":
@@ -425,11 +435,15 @@ class LFWrapper:
     
     def LoadRA(self, version, module_name):
         def load_from_GAC(module_name, version):
+            ra_pk_token = '3f98b3eaee6c16a6'
+            ca_pk_token = '607dd73ee2bd1c00'
+
             namespace = 'Laserfiche.{}'.format(module_name)
             version = r'{}.0.0'.format(version)
             module_name = module_name if module_name.lower() == 'clientautomation' else r'Laserfiche.{}'.format(module_name)
-            assembly_name = (r'{}, Version={}, Culture=neutral'
-                             ).format(module_name, version)
+            token = ca_pk_token if module_name.lower() == 'clientautomation' else ra_pk_token
+            assembly_name = (r'{}, Version={}, Culture=neutral, PublicKeyToken={}'
+                             ).format(module_name, version, token)
             try:
                 clr.AddReference(assembly_name)
                 return __import__(namespace)
