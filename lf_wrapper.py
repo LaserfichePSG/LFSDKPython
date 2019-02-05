@@ -7,6 +7,7 @@ import clr
 LF = None
 IS_IPY = 'GetClrType' in dir(clr)
 DEBUG = False
+
 # Hack for running pdb under ipy. Local path not automatically added to sys
 if 'pdb' in sys.modules:
     sys.path.insert(0, os.getcwd())
@@ -53,7 +54,8 @@ class LFModuleInstanceWrapper:
                 return LFModuleInstanceWrapper(self._objProps[x].GetValue(self._instance))
         #if this is one of python's magic methods unbox and pass to the instance
         if attr.startswith('__'):
-            return self.Unbox if IS_IPY else getattr(self.Unbox(), attr)
+            return getattr(self.Unbox(), attr)
+            #return self.Unbox if IS_IPY else getattr(self.Unbox(), attr)
         else:
             self._calling_method = attr
             return self._Call
@@ -159,6 +161,19 @@ class LFModuleWrapper:
     
     #method to call the appropriate overload of the static's methods given the provided arguments
     def _Call (self, *argv):
+        def _checkTypes(method, types):
+            p_enums = [i for i,t in enumerate(types) if t.Name == u'Int32']
+            p_types = [p.ParameterType for p in method.GetParameters()]
+            type_pairs = zip(p_types, types)
+            type_checks = map(lambda (i,e): e[0] == e[1] or i in p_enums and e[0].IsEnum, enumerate(type_pairs))
+            return not False in type_checks
+
+        def _handleEnum(mod_type, method_name, arg_types):
+            #get all methods that match the method name and have the correct parameter count
+            methods = [m for m in mod_type.GetMethods() if m.Name == method_name and m.GetParameters().Length == arg_sig['types'].Length]
+            targets = filter(lambda m: _checkTypes(m, arg_types), methods) 
+            return targets[0] if len(targets) > 0 else None
+
         if self._calling_method is None:
             raise KeyError("No method has been specified to be called!")
         #check arguments and throw exception is there are None references
@@ -174,7 +189,11 @@ class LFModuleWrapper:
             #try and find the appropriate orverloaded method based on the argument type signature
             target_method = mod_type.GetMethod(method_name, arg_sig['types'] if len(arg_sig['types']) > 0 else Type.EmptyTypes)
             if target_method is None:
-                raise KeyError("No overload of the provided method exists given the provided argument types!")
+                target_method = _handleEnum(mod_type, method_name, arg_sig['types'])
+                if target_method is None:
+                    raise KeyError("No overload of the provided method exists given the provided argument types!")
+                else :
+                    return LFModuleInstanceWrapper(target_method.Invoke(self._module, arg_sig['values']))
             else:
                 #return the retrieved method
                 return LFModuleInstanceWrapper(target_method.Invoke(self._module, arg_sig['values']))
@@ -346,6 +365,15 @@ class LFWrapper:
         else:
             raise Exception('Please load a version of the SDK')
 
+    def GetSession(self):
+        if self._lf_session.value != None:
+            return self._lf_session
+        else:
+            raise Exception('Not logged in!')
+
+    def GetCredentials(self):
+        if self._lf_credentials:
+            return self._lf_credentials
 
     def LoadCom(self, version, module_name):
         if module_name == "LFSO":
@@ -425,11 +453,15 @@ class LFWrapper:
     
     def LoadRA(self, version, module_name):
         def load_from_GAC(module_name, version):
+            ra_pk_token = '3f98b3eaee6c16a6'
+            ca_pk_token = '607dd73ee2bd1c00'
+
             namespace = 'Laserfiche.{}'.format(module_name)
             version = r'{}.0.0'.format(version)
             module_name = module_name if module_name.lower() == 'clientautomation' else r'Laserfiche.{}'.format(module_name)
-            assembly_name = (r'{}, Version={}, Culture=neutral'
-                             ).format(module_name, version)
+            token = ca_pk_token if module_name.lower() == 'clientautomation' else ra_pk_token
+            assembly_name = (r'{}, Version={}, Culture=neutral, PublicKeyToken={}'
+                             ).format(module_name, version, token)
             try:
                 clr.AddReference(assembly_name)
                 return __import__(namespace)
@@ -485,7 +517,11 @@ def debug():
     global LF
     LF = LFWrapper(Environment())
     LF.LoadRA('10.2', 'RepositoryAccess')
-    LF.Connect(server = 'localhost', database = 'PrimeX')
+    LF.Connect(server = 'localhost', database = 'Dev301', username='admin', password='a')
+
+    sess = LF.GetSession()
+    root = LF.Folder.GetRootFolder(sess)
+    LF.Folder.Create(root, "test", LF.EntryNameOption.AutoRename, sess)
 
 # Run main if not loaded as a module
 if __name__ == '__main__':

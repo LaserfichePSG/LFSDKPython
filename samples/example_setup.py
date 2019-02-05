@@ -36,8 +36,8 @@ def parse_args():
     return parser.parse_args()
 
 def create_lf_connection(server, repo, username, password):
-    lf = LFWrapper(Environment())
-    lf.LoadRA("10.0", "RepositoryAccess")
+    lf = LFWrapper()
+    lf.LoadRA("10.2", "RepositoryAccess")
     if username is None:
         lf.Connect(server=server, database=repo)
     else:
@@ -46,7 +46,7 @@ def create_lf_connection(server, repo, username, password):
 
 def create_documents(lf, count, error_rate):
     outputs = []
-    sess = lf._lf_session
+    sess = lf.GetSession()
     parent = None
 
     #create the parent folder if necessary
